@@ -1,44 +1,15 @@
-name: Deploy API
+# This workflow file is currently disabled during development.
+# It will be used for API deployment when ready to deploy.
+name: disabled-deploy-api
 
 on:
-  push:
-    branches: [main]
+  # This workflow will only run when manually triggered
   workflow_dispatch:
 
 jobs:
-  deploy:
+  # Empty job that does nothing
+  placeholder:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install gunicorn
-
-      # This step is a placeholder - you would replace with your actual deployment logic
-      # Examples include deploying to Heroku, AWS, Google Cloud, etc.
-      - name: Deploy to cloud provider
-        run: |
-          echo "This is where you would deploy your API to your hosting provider"
-          echo "For example, using Heroku:"
-          # heroku login
-          # git push heroku main
-
-          # Or for AWS Elastic Beanstalk:
-          # eb deploy
-
-          # This step will depend on your chosen hosting platform
-
-      # Example notification of successful deployment
-      - name: Notify deployment complete
-        run: |
-          echo "API deployment completed successfully"
+      - name: No-op
+        run: echo "This workflow is currently disabled during development."

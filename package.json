@@ -1,0 +1,20 @@
+{
+  "name": "startupdirectory",
+  "version": "1.0.0",
+  "description": "**Powered by [jetski.ai](https://jetski.ai)**",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jetskiAI/startupdirectory.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jetskiAI/startupdirectory/issues"
+  },
+  "homepage": "https://github.com/jetskiAI/startupdirectory#readme"
+}
