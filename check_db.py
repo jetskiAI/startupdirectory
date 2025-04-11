@@ -153,7 +153,11 @@ def main():
             print(format_text(f"Year: {s.year_founded}", Colors.YELLOW, args))
             print(format_text(f"Batch: {s.batch}", Colors.YELLOW, args))
             print(f"Status: {s.status}")
-            print(f"Location: {s.location}")
+
+            # Highlight location field with cyan color
+            location_text = s.location if s.location else "Not specified"
+            print(format_text(f"Location: {location_text}", Colors.CYAN, args))
+
             print(f"Tags: {s.tags}")
             print(f"Team Size: {s.team_size}")
 

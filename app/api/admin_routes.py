@@ -5,7 +5,7 @@ import logging
 import threading
 from datetime import datetime
 
-from app.scrapers.yc_scraper import YCombinatorScraper
+from app.scrapers.selenium_yc_scraper import SeleniumYCScraper
 from app.models.startup import Startup, Founder
 from app.models.db import db
 from app.models.scraper_run import ScraperRun
@@ -54,7 +54,7 @@ def require_api_key(view_function):
 
 # Scraper functions mapped to their names
 scraper_map = {
-    "yc": YCombinatorScraper,
+    "yc": SeleniumYCScraper,
     # Add other scrapers as they are implemented
     # 'neo': NeoScraper,
     # 'techstars': TechStarsScraper,

@@ -6,6 +6,7 @@ import logging
 from bs4 import BeautifulSoup
 from datetime import datetime
 import traceback
+from flask import current_app
 
 # Selenium imports
 from selenium import webdriver
@@ -44,13 +45,15 @@ class SeleniumYCScraper(BaseScraper):
         self.stats = {"added": 0, "updated": 0, "unchanged": 0, "total": 0}
         self.current_run = None
 
-    def fetch_startups(self, year=None, track_run=True):
+    def fetch_startups(self, year=None, track_run=True, headless=True, wait_time=10):
         """
         Fetch startups from Y Combinator
 
         Args:
             year (int, optional): Filter startups by year
             track_run (bool): Whether to track this run in the database
+            headless (bool): Whether to run the browser in headless mode
+            wait_time (int): How many seconds to wait for content to load
 
         Returns:
             list: List of startup dictionaries
@@ -70,7 +73,9 @@ class SeleniumYCScraper(BaseScraper):
 
         try:
             # Use Selenium to scrape the actual website
-            startups = self._scrape_with_selenium(year)
+            startups = self._scrape_with_selenium(
+                year, headless=headless, wait_time=wait_time
+            )
 
             # Complete run if tracking enabled
             if track_run and self.current_run:
@@ -94,19 +99,21 @@ class SeleniumYCScraper(BaseScraper):
 
             return []
 
-    def _scrape_with_selenium(self, year=None):
+    def _scrape_with_selenium(self, year=None, headless=True, wait_time=10):
         """Scrape YC startups using Selenium for browser automation"""
         logger.info("Starting Selenium-based web scraping...")
         all_startups = []
 
         # Configure Chrome options
         chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run in headless mode
+        if headless:
+            chrome_options.add_argument("--headless")  # Run in headless mode
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
+        # Use a more human-like user agent
         chrome_options.add_argument(
-            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
         )
 
         # Set up the driver
@@ -115,215 +122,318 @@ class SeleniumYCScraper(BaseScraper):
                 service=Service(ChromeDriverManager().install()), options=chrome_options
             )
 
-            # Build the URL - if year is provided, filter by batch
-            url = self.base_url
+            batches = []
             if year:
-                # YC uses W/S prefix with 2-digit year (e.g., W21, S21)
+                # Use the batch parameter to filter by year
+                # YC uses batches like W22, S22 for 2022
                 short_year = str(year)[-2:]
-                url = f"{url}?batch=W{short_year},S{short_year}"
+                # Create separate batches for winter and summer sessions
+                batches = [f"W{short_year}", f"S{short_year}"]
                 logger.info(
-                    f"Filtering by year: {year} (batches W{short_year}, S{short_year})"
+                    f"Will scrape each batch individually: {', '.join(batches)}"
+                )
+            else:
+                # If no year is provided, just use the base URL once
+                batches = [None]
+
+            # Process each batch separately
+            for batch in batches:
+                # Navigate directly with filter URL parameters
+                url = self.base_url
+                if batch:
+                    url = f"{url}?batch={batch}"
+                    logger.info(f"Scraping batch: {batch} at URL: {url}")
+                else:
+                    logger.info(f"Scraping all batches at URL: {url}")
+
+                logger.info(f"Navigating to {url}")
+                driver.get(url)
+
+                # Wait for the page to load
+                wait = WebDriverWait(
+                    driver, wait_time + 5
+                )  # Add a buffer to the wait time
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
+
+                # Log page title and URL to confirm we're in the right place
+                logger.info(f"Page title: {driver.title}")
+                logger.info(f"Current URL: {driver.current_url}")
+
+                # Allow time for JavaScript to render content
+                logger.info(
+                    f"Waiting {wait_time} seconds for JavaScript to render content..."
+                )
+                time.sleep(wait_time)
+
+                # Take screenshot for debugging
+                screenshot_prefix = batch if batch else "all"
+                screenshot_path = f"yc_filtered_{screenshot_prefix}.png"
+                driver.save_screenshot(screenshot_path)
+                logger.info(f"Saved screenshot to {screenshot_path}")
+
+                # Use a direct DOM-based approach to extract companies
+                logger.info("Trying direct DOM extraction...")
+                company_links = driver.find_elements(
+                    By.CSS_SELECTOR, 'a[class*="_company_"]'
                 )
 
-            # Navigate to the YC companies page
-            logger.info(f"Navigating to {url}")
-            driver.get(url)
-
-            # Wait for the page to load
-            wait = WebDriverWait(driver, 10)
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
-
-            # Log page title and URL to confirm we're in the right place
-            logger.info(f"Page title: {driver.title}")
-            logger.info(f"Current URL: {driver.current_url}")
-
-            # Allow time for JavaScript to render content
-            time.sleep(5)
-
-            # Take screenshot for debugging
-            screenshot_path = "yc_screenshot.png"
-            driver.save_screenshot(screenshot_path)
-            logger.info(f"Saved screenshot to {screenshot_path}")
-
-            # Try to identify company containers
-            potential_selectors = [
-                ".Directory_companyList__R0sxr > div",  # YC companies are in this container as of 2023
-                ".company-card",
-                ".company",
-                "[data-testid='company-card']",
-                ".startup-item",
-                "div[role='list'] > div",  # Generic list container
-            ]
-
-            company_elements = []
-            used_selector = None
-
-            for selector in potential_selectors:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                if (
-                    elements and len(elements) > 5
-                ):  # Ensure we found a reasonable number of companies
-                    company_elements = elements
-                    used_selector = selector
-                    logger.info(
-                        f"Found {len(elements)} companies using selector: {selector}"
+                if not company_links or len(company_links) < 5:
+                    logger.warning(
+                        f"Found only {len(company_links) if company_links else 0} company links with primary selector, trying alternatives..."
                     )
-                    break
-
-            if not company_elements:
-                logger.warning(
-                    "No company elements found with standard selectors. Attempting to analyze page structure..."
-                )
-                # Try to save the HTML for analysis
-                with open("yc_page.html", "w") as f:
-                    f.write(driver.page_source)
-                logger.info("Saved page HTML to yc_page.html for analysis")
-
-                # Try another approach - look for elements with links and text
-                elements = driver.find_elements(By.CSS_SELECTOR, "div")
-                potential_companies = []
-
-                for elem in elements:
-                    # Look for elements that might be company cards
-                    if elem.text and len(elem.text.split("\n")) >= 2:
-                        links = elem.find_elements(By.TAG_NAME, "a")
-                        if links:
-                            potential_companies.append(elem)
-
-                if potential_companies and len(potential_companies) > 5:
-                    company_elements = potential_companies
-                    logger.info(
-                        f"Found {len(potential_companies)} potential company elements using fallback method"
+                    # Try alternative selectors
+                    company_links = driver.find_elements(
+                        By.CSS_SELECTOR, 'a[href^="/companies/"]'
                     )
 
-            # Process each company element
-            for i, element in enumerate(company_elements):
-                try:
-                    # Extract text content
-                    text_content = element.text.strip()
-                    if not text_content:
-                        continue
-
-                    logger.info(f"Processing company {i+1}/{len(company_elements)}")
-
-                    # Extract lines of text
-                    lines = text_content.split("\n")
-
-                    # Basic parsing - first line is usually company name
-                    company_name = lines[0] if lines else "Unknown"
-                    # Second line often contains description
-                    description = lines[1] if len(lines) > 1 else ""
-
-                    # Create company data structure
-                    company_data = {
-                        "name": company_name,
-                        "description": description,
-                        "batch": "",
-                        "url": "",
-                        "logoUrl": "",
-                        "tags": [],
-                        "status": "ACTIVE",  # Default status
-                        "teamSize": "",
-                        "location": "",
-                        "founders": [],
-                    }
-
-                    # Try to extract more details
-                    try:
-                        # Find links
-                        links = element.find_elements(By.TAG_NAME, "a")
-                        if links:
-                            # First link is often the company URL
-                            for link in links:
-                                href = link.get_attribute("href")
-                                if href and "ycombinator.com" not in href:
-                                    company_data["url"] = href
-                                    break
-
-                        # Find images (logo)
-                        images = element.find_elements(By.TAG_NAME, "img")
-                        if images:
-                            company_data["logoUrl"] = (
-                                images[0].get_attribute("src") or ""
-                            )
-
-                        # Look for batch info in text
-                        batch_pattern = r"\b([WS]\d{2})\b"  # Pattern for W20, S21, etc.
-                        batch_matches = re.findall(batch_pattern, text_content)
-                        if batch_matches:
-                            company_data["batch"] = batch_matches[0]
-                        elif year:
-                            # If batch not found but year was specified, make educated guess
-                            short_year = str(year)[-2:]
-                            company_data["batch"] = (
-                                f"W{short_year}"  # Default to winter batch
-                            )
-
-                        # Extract additional info - look for common patterns
-                        for line in lines[2:]:  # Skip name and description
-                            # Location often contains city names
-                            location_indicators = [
-                                "San Francisco",
-                                "New York",
-                                "Boston",
-                                "Remote",
-                                "USA",
-                                "London",
-                            ]
-                            if any(
-                                indicator in line for indicator in location_indicators
-                            ):
-                                company_data["location"] = line.strip()
-
-                            # Tags/categories
-                            if len(line.split(",")) > 1 and len(line) < 50:
-                                company_data["tags"] = [
-                                    tag.strip() for tag in line.split(",")
-                                ]
-
-                    except Exception as detail_e:
-                        logger.error(
-                            f"Error extracting details for company {company_name}: {detail_e}"
+                    if not company_links or len(company_links) < 5:
+                        logger.warning(
+                            "Still not enough company links, trying one more selector..."
+                        )
+                        # One more attempt with a broader selector
+                        company_links = driver.find_elements(
+                            By.CSS_SELECTOR, 'div[class*="rightCol"] a'
                         )
 
-                    # Add to our collection if it has a valid name
-                    if company_data["name"] and company_data["name"] != "Unknown":
-                        all_startups.append(company_data)
-                        logger.info(f"Added company: {company_data['name']}")
-
-                except Exception as e:
-                    logger.error(f"Error processing company element {i+1}: {e}")
-
-            logger.info(f"Extracted {len(all_startups)} companies from YC website")
-
-            # If we found very few companies, attempt to scroll and load more
-            if len(all_startups) < 10:
-                logger.info(
-                    "Found fewer companies than expected. Attempting to scroll and load more..."
-                )
-
-                # Scroll to load more content
-                for _ in range(5):
-                    driver.execute_script(
-                        "window.scrollTo(0, document.body.scrollHeight);"
-                    )
-                    time.sleep(2)  # Wait for content to load
-
-                # Take another screenshot after scrolling
-                driver.save_screenshot("yc_scrolled.png")
-                logger.info("Saved screenshot after scrolling to yc_scrolled.png")
-
-                # Try to find elements again
-                if used_selector:
-                    company_elements = driver.find_elements(
-                        By.CSS_SELECTOR, used_selector
-                    )
+                if company_links and len(company_links) > 0:
                     logger.info(
-                        f"After scrolling, found {len(company_elements)} companies"
+                        f"Found {len(company_links)} potential company links for batch {batch or 'all'}"
                     )
 
-                    # Process any new elements
-                    # (Implement similar extraction logic as above)
+                    for i, link in enumerate(company_links):
+                        try:
+                            # Extract HTML to debug
+                            if i < 3:  # Just log the first few for debugging
+                                logger.info(
+                                    f"Company link {i+1} HTML: {link.get_attribute('outerHTML')[:200]}..."
+                                )
+
+                            # Extract text content
+                            text_content = link.text.strip()
+                            if not text_content:
+                                continue
+
+                            logger.info(
+                                f"Processing company {i+1}/{len(company_links)}"
+                            )
+
+                            # Extract company name - assume it's the first line or has a specific class
+                            lines = text_content.split("\n")
+                            company_name = lines[0] if lines else ""
+
+                            # Skip obvious non-company elements
+                            skip_names = [
+                                "About",
+                                "Contact",
+                                "FAQ",
+                                "Menu",
+                                "Home",
+                                "Jobs",
+                            ]
+                            if any(
+                                skip_word.lower() in company_name.lower()
+                                for skip_word in skip_names
+                            ):
+                                continue
+
+                            # Get description - typically second line or has specific class
+                            description = lines[1] if len(lines) > 1 else ""
+
+                            # Get location if present (typically has "location" in class name or appears after name)
+                            location = ""
+                            for line in lines[1:]:
+                                if any(
+                                    loc in line
+                                    for loc in [
+                                        "San Francisco",
+                                        "New York",
+                                        "Remote",
+                                        "London",
+                                        "Berlin",
+                                        "Singapore",
+                                        "Tel Aviv",
+                                    ]
+                                ):
+                                    location = line
+                                    break
+
+                            # Try to extract batch (S22, W22, etc.) and industry tags
+                            batch = ""
+                            tags = []
+
+                            # Check for batch pattern in text
+                            batch_match = re.search(r"([WS]\d{2})", text_content)
+                            if batch_match:
+                                batch = batch_match.group(0)
+
+                            # Create company data structure
+                            company_data = {
+                                "name": company_name.strip(),
+                                "description": description.strip(),
+                                "batch": batch,
+                                "url": link.get_attribute("href") or "",
+                                "logoUrl": "",
+                                "tags": tags,
+                                "status": "ACTIVE",  # Default status
+                                "teamSize": "",
+                                "location": location.strip(),
+                                "founders": [],
+                            }
+
+                            # Try to find logo image
+                            try:
+                                img = link.find_element(By.TAG_NAME, "img")
+                                if img:
+                                    company_data["logoUrl"] = (
+                                        img.get_attribute("src") or ""
+                                    )
+                            except:
+                                pass
+
+                            # Visit the individual company page to get more details
+                            if (
+                                company_data["url"]
+                                and "ycombinator.com" in company_data["url"]
+                            ):
+                                try:
+                                    logger.info(
+                                        f"Visiting company page: {company_data['url']}"
+                                    )
+
+                                    # Open the company page in a new tab
+                                    driver.execute_script(
+                                        f"window.open('{company_data['url']}', '_blank');"
+                                    )
+
+                                    # Switch to the new tab
+                                    driver.switch_to.window(driver.window_handles[1])
+
+                                    # Wait for page to load
+                                    wait = WebDriverWait(driver, wait_time)
+                                    wait.until(
+                                        EC.presence_of_element_located(
+                                            (By.TAG_NAME, "body")
+                                        )
+                                    )
+
+                                    # Allow time for page to render fully
+                                    time.sleep(3)
+
+                                    # Extract founders information
+                                    try:
+                                        # Look for founder elements - adjust selectors based on YC's actual HTML structure
+                                        founder_elements = driver.find_elements(
+                                            By.CSS_SELECTOR,
+                                            'div[class*="founder"], div[class*="team"]',
+                                        )
+
+                                        if not founder_elements:
+                                            # Try alternate selectors
+                                            founder_elements = driver.find_elements(
+                                                By.XPATH,
+                                                '//h3[contains(text(), "Founder") or contains(text(), "Team")]/following-sibling::div',
+                                            )
+
+                                        for element in founder_elements:
+                                            try:
+                                                founder_name = element.find_element(
+                                                    By.CSS_SELECTOR, "h3, h4, strong"
+                                                ).text.strip()
+
+                                                # Try to get title if available
+                                                title = ""
+                                                try:
+                                                    title_elem = element.find_element(
+                                                        By.CSS_SELECTOR, "p, span"
+                                                    )
+                                                    title = title_elem.text.strip()
+                                                except:
+                                                    pass
+
+                                                # Try to get LinkedIn URL if available
+                                                linkedin_url = ""
+                                                try:
+                                                    linkedin_link = element.find_element(
+                                                        By.XPATH,
+                                                        './/a[contains(@href, "linkedin.com")]',
+                                                    )
+                                                    linkedin_url = (
+                                                        linkedin_link.get_attribute(
+                                                            "href"
+                                                        )
+                                                    )
+                                                except:
+                                                    pass
+
+                                                if founder_name:
+                                                    company_data["founders"].append(
+                                                        {
+                                                            "name": founder_name,
+                                                            "title": title,
+                                                            "linkedin_url": linkedin_url,
+                                                            "twitter_url": "",
+                                                            "github_url": "",
+                                                            "email": "",
+                                                            "bio": "",
+                                                            "role_type": "",
+                                                            "background": "",
+                                                        }
+                                                    )
+                                                    logger.info(
+                                                        f"Found founder: {founder_name}"
+                                                    )
+                                            except Exception as fe:
+                                                logger.error(
+                                                    f"Error processing founder element: {fe}"
+                                                )
+                                    except Exception as e:
+                                        logger.error(f"Error extracting founders: {e}")
+
+                                    # Extract additional tags
+                                    try:
+                                        # Look for tag elements
+                                        tag_elements = driver.find_elements(
+                                            By.CSS_SELECTOR,
+                                            'span[class*="tag"], div[class*="tag"]',
+                                        )
+
+                                        for tag_elem in tag_elements:
+                                            tag_text = tag_elem.text.strip()
+                                            if (
+                                                tag_text
+                                                and tag_text not in company_data["tags"]
+                                            ):
+                                                company_data["tags"].append(tag_text)
+                                                logger.info(f"Found tag: {tag_text}")
+                                    except Exception as e:
+                                        logger.error(f"Error extracting tags: {e}")
+
+                                    # Close the company page tab and switch back to the main tab
+                                    driver.close()
+                                    driver.switch_to.window(driver.window_handles[0])
+
+                                except Exception as e:
+                                    logger.error(f"Error visiting company page: {e}")
+                                    # Make sure to switch back to the main tab if there's an error
+                                    if len(driver.window_handles) > 1:
+                                        driver.close()
+                                        driver.switch_to.window(
+                                            driver.window_handles[0]
+                                        )
+
+                            # Add to our collection if it has a valid name and doesn't look like a UI element
+                            if (
+                                company_data["name"]
+                                and company_data["name"] != "Unknown"
+                                and len(company_data["name"]) > 2
+                            ):
+                                all_startups.append(company_data)
+                                logger.info(f"Added company: {company_data['name']}")
+                        except Exception as e:
+                            logger.error(f"Error processing company link {i+1}: {e}")
+                            continue
+                else:
+                    logger.warning("No company links found in the DOM")
 
         except Exception as e:
             logger.error(f"Error in Selenium scraper: {e}")

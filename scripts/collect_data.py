@@ -22,7 +22,7 @@ from app import create_app
 from app.models.db import db
 from app.models.startup import Startup, Founder
 from app.models.scraper_run import ScraperRun
-from app.scrapers.yc_scraper import YCombinatorScraper
+from app.scrapers.selenium_yc_scraper import SeleniumYCScraper
 from app.utils.scraper_utils import should_run_full_update
 
 # Configure logging
@@ -108,14 +108,14 @@ def save_startup_data(startup_data):
 
 
 def collect_yc_data(year=None, force=False):
-    """Collect data from Y Combinator"""
+    """Collect data from Y Combinator using Selenium scraper"""
     # Check if we should run the update
     if not force and not should_run_full_update(source="YC", db=db):
         logger.info("Skipping YC update - last run was less than 3 months ago")
         return 0
 
     logger.info(f"Collecting YC data for {'all years' if year is None else year}")
-    scraper = YCombinatorScraper()
+    scraper = SeleniumYCScraper()
 
     # Fetch startups - tracking is handled inside the scraper
     startups = scraper.fetch_startups(year, track_run=True)

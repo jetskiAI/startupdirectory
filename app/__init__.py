@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from app.models.db import init_db
 from app.api.startup_routes import startup_bp
 from app.api.admin_routes import admin_bp
+from app.cli.scraper_commands import cli as scraper_cli
 
 load_dotenv()
 
@@ -14,7 +15,7 @@ migrate = Migrate()
 
 
 def create_app(config=None):
-    '''It configures the database connection, sets up routes (URLs), and other settings'''
+    """It configures the database connection, sets up routes (URLs), and other settings"""
     app = Flask(__name__)
 
     # Configure app
@@ -30,6 +31,9 @@ def create_app(config=None):
     # Register blueprints
     app.register_blueprint(startup_bp, url_prefix="/api")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
+
+    # Register CLI commands
+    app.cli.add_command(scraper_cli)
 
     @app.route("/")
     def health_check():
