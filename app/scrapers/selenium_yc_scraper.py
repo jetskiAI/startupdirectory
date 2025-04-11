@@ -3,9 +3,11 @@ import re
 import time
 import random
 import logging
+import os
+import glob
+import traceback
 from bs4 import BeautifulSoup
 from datetime import datetime
-import traceback
 from flask import current_app
 
 # Selenium imports
@@ -77,6 +79,22 @@ class SeleniumYCScraper(BaseScraper):
                 year, headless=headless, wait_time=wait_time
             )
 
+            # If scraping completed successfully, delete all screenshots
+            if startups:
+                screenshot_pattern = "yc_*.png"
+                screenshot_count = 0
+                for screenshot in glob.glob(screenshot_pattern):
+                    try:
+                        os.remove(screenshot)
+                        screenshot_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error removing screenshot {screenshot}: {e}")
+
+                if screenshot_count > 0:
+                    logger.info(
+                        f"Successfully removed {screenshot_count} screenshots after successful scrape"
+                    )
+
             # Complete run if tracking enabled
             if track_run and self.current_run:
                 complete_scraper_run(self.current_run.id, "success", self.stats, db=db)
@@ -103,6 +121,16 @@ class SeleniumYCScraper(BaseScraper):
         """Scrape YC startups using Selenium for browser automation"""
         logger.info("Starting Selenium-based web scraping...")
         all_startups = []
+
+        # Clean up old screenshots
+        # Delete any existing yc_filtered_*.png screenshots
+        screenshot_pattern = "yc_filtered_*.png"
+        for old_screenshot in glob.glob(screenshot_pattern):
+            try:
+                os.remove(old_screenshot)
+                logger.info(f"Removed old screenshot: {old_screenshot}")
+            except Exception as e:
+                logger.warning(f"Error removing old screenshot {old_screenshot}: {e}")
 
         # Configure Chrome options
         chrome_options = Options()
