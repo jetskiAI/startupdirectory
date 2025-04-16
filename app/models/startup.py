@@ -38,6 +38,33 @@ class Startup(db.Model):
     # Relationships
     founders = relationship("Founder", back_populates="startup")
 
+    def __init__(self, **kwargs):
+        """Custom initialization to ensure year_founded is never NULL"""
+        # Set defaults for required fields before calling parent initializer
+        if "year_founded" not in kwargs or kwargs["year_founded"] is None:
+            # Try to extract year from batch
+            batch = kwargs.get("batch", "")
+            if (
+                batch
+                and len(batch) >= 3
+                and batch[0]
+                in [
+                    "W",
+                    "S",
+                    "F",
+                    "X",
+                ]  # Include new batch prefixes F (Fall) and X (Summer)
+                and batch[1:].isdigit()
+            ):
+                # Convert batch like 'S20' to year 2020
+                kwargs["year_founded"] = 2000 + int(batch[1:])
+            else:
+                # Default to current year if no batch or invalid format
+                kwargs["year_founded"] = datetime.utcnow().year
+
+        # Call parent initializer with updated kwargs
+        super(Startup, self).__init__(**kwargs)
+
     def __repr__(self):
         return f"<Startup {self.name}>"
 

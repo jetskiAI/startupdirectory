@@ -1,72 +1,88 @@
 import click
+from flask.cli import with_appcontext
 from app.scrapers.selenium_yc_scraper import SeleniumYCScraper
+from app.models.db import db
+from app.models.scraper_run import ScraperRun
+from datetime import datetime, timedelta
+import logging
 
-# Create a CLI group for scraper commands
-cli = click.Group(name="scrapers")
-
-
-@click.command("scrape-yc-selenium")
-@click.option("--year", default=None, type=int, help="Filter by year (optional)")
-def scrape_yc_selenium(year):
-    """Scrape YC startups from their website using Selenium"""
-    click.echo("Starting Selenium-based YC scraper...")
-
-    scraper = SeleniumYCScraper()
-    startups = scraper.fetch_startups(year=year)
-
-    # Print the scraping statistics
-    click.echo(f"Scraping completed. Statistics:")
-    click.echo(f"Total companies processed: {scraper.stats['total']}")
-    click.echo(f"New companies added: {scraper.stats['added']}")
-    click.echo(f"Existing companies updated: {scraper.stats['updated']}")
-    click.echo(f"Unchanged companies: {scraper.stats['unchanged']}")
-
-    if scraper.stats["total"] == 0:
-        click.echo(
-            "Warning: No startups were found or processed. Check the log for errors."
-        )
+logger = logging.getLogger(__name__)
 
 
-@click.command("scrape-yc")
-@click.option("--year", default=None, type=int, help="Filter by year (optional)")
+@click.group()
+def scraper():
+    """Commands for managing the YC scraper"""
+    pass
+
+
+@scraper.command()
+@click.option("--year", type=int, help="Filter startups by year")
 @click.option(
-    "--no-headless", is_flag=True, help="Run with visible browser (for debugging)"
+    "--headless/--no-headless", default=True, help="Run browser in headless mode"
 )
-@click.option(
-    "--wait-time",
-    default=10,
-    type=int,
-    help="Seconds to wait for content to load (default: 10)",
-)
-def scrape_yc(year, no_headless, wait_time):
-    """Scrape YC startups from their website (uses Selenium)"""
-    # This is just a wrapper around the selenium scraper for easier migration
-    headless = not no_headless
-    mode = "visible browser" if not headless else "headless mode"
-    click.echo(
-        f"Starting YC scraper (Selenium-based) in {mode} with {wait_time}s wait time..."
-    )
-
-    # Create and run the selenium scraper directly instead of calling the other function
-    scraper = SeleniumYCScraper()
-    startups = scraper.fetch_startups(year=year, headless=headless, wait_time=wait_time)
-
-    # Print the scraping statistics
-    click.echo(f"Scraping completed. Statistics:")
-    click.echo(f"Total companies processed: {scraper.stats['total']}")
-    click.echo(f"New companies added: {scraper.stats['added']}")
-    click.echo(f"Existing companies updated: {scraper.stats['updated']}")
-    click.echo(f"Unchanged companies: {scraper.stats['unchanged']}")
-
-    if scraper.stats["total"] == 0:
-        click.echo(
-            "Warning: No startups were found or processed. Check the log for errors."
+@click.option("--wait-time", type=int, default=10, help="Wait time for page loading")
+@with_appcontext
+def run(year, headless, wait_time):
+    """Run the YC scraper"""
+    try:
+        logger.info(
+            f"Starting scraper with year={year}, headless={headless}, wait_time={wait_time}"
         )
+        scraper = SeleniumYCScraper()
+        startups = scraper.fetch_startups(
+            year=year, headless=headless, wait_time=wait_time
+        )
+        logger.info(f"Successfully scraped {len(startups)} startups")
+    except Exception as e:
+        logger.error(f"Error running scraper: {e}")
+        raise click.ClickException(str(e))
 
 
-# Register commands
-cli.add_command(scrape_yc_selenium)
-cli.add_command(scrape_yc)
+@scraper.command()
+@click.option("--days", type=int, default=7, help="Number of days to look back")
+@with_appcontext
+def check_runs(days):
+    """Check recent scraper runs"""
+    try:
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        runs = ScraperRun.query.filter(ScraperRun.created_at >= cutoff_date).all()
 
-if __name__ == "__main__":
-    cli()
+        if not runs:
+            click.echo(f"No scraper runs found in the last {days} days")
+            return
+
+        click.echo(f"\nRecent Scraper Runs (last {days} days):")
+        click.echo("=" * 80)
+
+        for run in runs:
+            status_color = "green" if run.status == "success" else "red"
+            click.echo(f"\nRun #{run.id}")
+            click.echo(f"Status: {click.style(run.status, fg=status_color)}")
+            click.echo(f"Started: {run.created_at}")
+            click.echo(f"Duration: {run.duration} seconds")
+            if run.error_message:
+                click.echo(f"Error: {run.error_message}")
+            click.echo("-" * 40)
+
+    except Exception as e:
+        logger.error(f"Error checking scraper runs: {e}")
+        raise click.ClickException(str(e))
+
+
+@scraper.command()
+@with_appcontext
+def clear_runs():
+    """Clear all scraper run records"""
+    try:
+        count = ScraperRun.query.delete()
+        db.session.commit()
+        click.echo(f"Cleared {count} scraper run records")
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error clearing scraper runs: {e}")
+        raise click.ClickException(str(e))
+
+
+def register_commands(app):
+    """Register CLI commands with the Flask app"""
+    app.cli.add_command(scraper)

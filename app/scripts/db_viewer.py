@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+Purpose: Interactive command-line tool for users
+Design: Optimized for human interaction and readability
+
 - Simple script to check database contents, instead of having to run sqlite3 shell.
 - Features:
   - Paginates results (40 at a time)
@@ -27,9 +30,8 @@ Ultimately, there are better options for working with lots of data:
 - Use a database GUI like DB Browser for SQLite
 - Create a simple admin web interface
 """
-
 import argparse
-import sys
+import re
 from sqlalchemy import or_
 from app import create_app
 from app.models.startup import Startup, Founder
@@ -46,6 +48,20 @@ class Colors:
     ENDC = "\033[0m"
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
+
+
+def clean_company_name(name, location):
+    """Clean company name by removing location if it's appended at the end"""
+    if not name or not location:
+        return name
+
+    # Create a regex pattern that matches the exact location string
+    # Escape special characters and handle spaces
+    location_pattern = re.escape(location)
+    # Also handle cases where location might be separated by comma or space
+    location_pattern = f"[,\\s]*{location_pattern}"
+    # Replace the location pattern with empty string
+    return re.sub(location_pattern, "", name).strip()
 
 
 def parse_args():
@@ -105,6 +121,8 @@ def main():
                     Startup.year_founded == year,
                     Startup.batch.like(f"W{short_year}%"),
                     Startup.batch.like(f"S{short_year}%"),
+                    Startup.batch.like(f"F{short_year}%"),
+                    Startup.batch.like(f"X{short_year}%"),
                 )
             )
             filters_applied.append(f"year: {year}")
@@ -148,7 +166,9 @@ def main():
         # Display startups
         for s in startups:
             print(format_text(f"ID: {s.id}", Colors.BOLD, args))
-            print(format_text(f"Name: {s.name}", Colors.BOLD + Colors.GREEN, args))
+            # Clean the company name before displaying
+            clean_name = clean_company_name(s.name, s.location)
+            print(format_text(f"Name: {clean_name}", Colors.BOLD + Colors.GREEN, args))
             print(f"Description: {s.description}")
             print(format_text(f"Year: {s.year_founded}", Colors.YELLOW, args))
             print(format_text(f"Batch: {s.batch}", Colors.YELLOW, args))
@@ -158,7 +178,12 @@ def main():
             location_text = s.location if s.location else "Not specified"
             print(format_text(f"Location: {location_text}", Colors.CYAN, args))
 
-            print(f"Tags: {s.tags}")
+            # Display tags as comma-separated values if available
+            if s.tags and isinstance(s.tags, str):
+                print(f"Tags: {s.tags}")
+            else:
+                print("Tags: None")
+
             print(f"Team Size: {s.team_size}")
 
             # Show founders with different formatting
